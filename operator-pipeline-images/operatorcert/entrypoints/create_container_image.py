@@ -29,7 +29,6 @@ def setup_argparser() -> Any:  # pragma: no cover
     parser.add_argument(
         "--isv-pid",
         help="isv_pid of the certification project from Red Hat Connect",
-        required=True,
     )
     parser.add_argument(
         "--repo-published",
@@ -77,12 +76,16 @@ def setup_argparser() -> Any:  # pragma: no cover
 
 
 def check_if_image_already_exists(args) -> bool:
+    log_msg_params = "docker_image_digest"
+
     # quote is needed to urlparse the quotation marks
-    filter_str = quote(
-        f'isv_pid=="{args.isv_pid}";'
-        f'docker_image_digest=="{args.docker_image_digest}";'
-        f"not(deleted==true)"
+    str_to_quote = (
+        f'docker_image_digest=="{args.docker_image_digest}";' "not(deleted==true)"
     )
+    if args.isv_pid:
+        str_to_quote = f'isv_pid=="{args.isv_pid}";{str_to_quote}'
+        log_msg_params = log_msg_params + " and isv_pid"
+    filter_str = quote(str_to_quote)
 
     check_url = urljoin(args.pyxis_url, f"v1/images?page_size=1&filter={filter_str}")
 
@@ -93,13 +96,11 @@ def check_if_image_already_exists(args) -> bool:
     query_results = rsp.json()["data"]
 
     if len(query_results) == 0:
-        LOGGER.info(
-            "Image with given docker_image_digest and isv_pid doesn't exist yet"
-        )
+        LOGGER.info(f"Image with given {log_msg_params} doesn't exist yet")
         return False
 
     LOGGER.info(
-        "Image with given docker_image_digest and isv_pid already exists."
+        f"Image with given {log_msg_params} already exists."
         "Skipping the image creation."
     )
     return True
@@ -126,7 +127,6 @@ def create_container_image(
 
     upload_url = urljoin(args.pyxis_url, f"v1/images")
     container_image_payload = {
-        "isv_pid": args.isv_pid,
         "repositories": [
             {
                 "published": True,
@@ -149,6 +149,9 @@ def create_container_image(
         "sum_layer_size_bytes": int(podman_result[0]["Size"]),
     }
 
+    if args.isv_pid:
+        container_image_payload["isv_pid"] = args.isv_pid
+
     if args.is_latest == "true":
         container_image_payload["repositories"][0]["tags"].append(
             {
@@ -162,7 +165,10 @@ def create_container_image(
 
 def remove_latest_from_previous_image(pyxis_url: str, isv_pid: str):
     # quote is needed to urlparse the quotation marks
-    filter_str = quote(f'isv_pid=="{isv_pid}";' "not(deleted==true)")
+    str_to_quote = f"not(deleted==true)"
+    if isv_pid:
+        str_to_quote = f'isv_pid=="{isv_pid}";{str_to_quote}'
+    filter_str = quote(str_to_quote)
 
     # If there are multiple results, we only want the most recent one- we enforce it by sorting by creation_date
     # and getting only the first result.
